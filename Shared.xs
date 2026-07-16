@@ -9,7 +9,18 @@
     if (!sv_isobject(sv) || !sv_derived_from(sv, "Data::IntervalTree::Shared")) \
         croak("Expected a Data::IntervalTree::Shared object"); \
     ItHandle *h = INT2PTR(ItHandle*, SvIV(SvRV(sv))); \
-    if (!h) croak("Attempted to use a destroyed Data::IntervalTree::Shared object")
+    if (!h) croak("Attempted to use a destroyed Data::IntervalTree::Shared object"); \
+    sv_2mortal(SvREFCNT_inc(SvRV(sv)))
+
+/* Re-read the handle after a call that can run Perl code (tied/overloaded
+ * argument magic, tied-array fetches).  That code may call $obj->DESTROY
+ * explicitly, which frees the handle and zeroes the IV; EXTRACT's mortal
+ * pins the referent only against refcount-driven destruction, not an
+ * explicit DESTROY, so the local `h` would dangle.  Used only where magic
+ * can actually intervene between EXTRACT and the first use of h. */
+#define REEXTRACT(sv) \
+    h = INT2PTR(ItHandle*, SvIV(SvRV(sv))); \
+    if (!h) croak("Data::IntervalTree::Shared object destroyed during the call")
 
 #define MAKE_OBJ(class, handle) \
     SV *obj = newSViv(PTR2IV(handle)); \
@@ -67,12 +78,14 @@ new(class, path = &PL_sv_undef, capacity = 0, ...)
   PREINIT:
     char errbuf[IT_ERR_BUFLEN];
   CODE:
-    const char *p = (SvGETMAGIC(path), SvOK(path)) ? SvPV_nolen(path) : NULL;
     if (capacity < 1)
         croak("Data::IntervalTree::Shared->new: capacity must be >= 1");
     /* Optional 4th arg: file mode for a newly-created file-backed segment
-     * (default 0600, owner-only). Pass e.g. 0660 for cross-user sharing. */
+     * (default 0600, owner-only). Pass e.g. 0660 for cross-user sharing.
+     * Resolved BEFORE the path PV is captured: this get-magic runs arbitrary
+     * Perl that could realloc/free that PV, so the path is captured last. */
     mode_t mode = (items > 3 && (SvGETMAGIC(ST(3)), SvOK(ST(3)))) ? (mode_t)SvUV(ST(3)) : 0600;
+    const char *p = (SvGETMAGIC(path), SvOK(path)) ? SvPV_nolen(path) : NULL;
     ItHandle *h = it_create(p, (uint64_t)capacity, mode, errbuf);
     if (!h) croak("Data::IntervalTree::Shared->new: %s", errbuf);
     MAKE_OBJ(class, h);
@@ -134,6 +147,7 @@ add(self, lo, hi, id = &PL_sv_undef)
      * code that dies, and a longjmp past the wrlock would strand it on a live PID. */
     int have_id = (SvGETMAGIC(id), SvOK(id));
     uint64_t id_val = have_id ? (uint64_t)SvUV(id) : 0;
+    REEXTRACT(self);
     it_rwlock_wrlock(h);
     payload = have_id ? id_val : h->hdr->count;   /* default id = insertion index */
     slot = it_add_locked(h, (int64_t)lo, (int64_t)hi, payload);
