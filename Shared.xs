@@ -88,6 +88,12 @@ new(class, path = &PL_sv_undef, capacity = 0, ...)
     const char *p = (SvGETMAGIC(path), SvOK(path)) ? SvPV_nolen(path) : NULL;
     ItHandle *h = it_create(p, (uint64_t)capacity, mode, errbuf);
     if (!h) croak("Data::IntervalTree::Shared->new: %s", errbuf);
+    /* Re-read the class PV from ST(0) now that all argument magic (capacity,
+     * mode, path) has run: xsubpp captured `class` in the INPUT section,
+     * before that magic, and the magic can realloc or free the PV it points
+     * into.  SvPV_nolen, NOT SvPV_nomg: an overloaded class must stringify
+     * through its '""' overload. */
+    class = SvPV_nolen(ST(0));
     MAKE_OBJ(class, h);
   OUTPUT:
     RETVAL
@@ -105,6 +111,7 @@ new_memfd(class, name = &PL_sv_undef, capacity = 0)
         croak("Data::IntervalTree::Shared->new_memfd: capacity must be >= 1");
     ItHandle *h = it_create_memfd(nm, (uint64_t)capacity, errbuf);
     if (!h) croak("Data::IntervalTree::Shared->new_memfd: %s", errbuf);
+    class = SvPV_nolen(ST(0));   /* re-read after argument magic; see new() */
     MAKE_OBJ(class, h);
   OUTPUT:
     RETVAL
@@ -118,6 +125,7 @@ new_from_fd(class, fd)
   CODE:
     ItHandle *h = it_open_fd(fd, errbuf);
     if (!h) croak("Data::IntervalTree::Shared->new_from_fd: %s", errbuf);
+    class = SvPV_nolen(ST(0));   /* re-read after argument magic; see new() */
     MAKE_OBJ(class, h);
   OUTPUT:
     RETVAL

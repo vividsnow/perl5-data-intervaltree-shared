@@ -16,5 +16,6 @@ xt/eg_runs.t
 xt/fork_it.t
 xt/kwalitee.t
 xt/pod.t
+xt/stale_class_pv.t
 xt/tsan.t
 xt/valgrind.t
